@@ -39,6 +39,8 @@ export const mintingWallet = [
   "together",
 ];
 
+export const minADASponsorWallet = "wood bench lock genuine relief coral guard reunion follow radio jewel cereal actual erosion recall".split(" ");
+
 export const userWallet = [
   "roast",
   "public",
