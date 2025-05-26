@@ -16,10 +16,18 @@ import {
   NativeScript,
   resolveScriptHash,
   stringToHex,
-  UTxO,
 } from "@meshsdk/core";
 
 const provider = new BlockfrostProvider(BF_KEY);
+
+const minWallet = new MeshWallet({
+  networkId: 0,
+  key: {
+    type: "mnemonic",
+    words: minADASponsorWallet,
+  },
+  fetcher: provider,
+});
 
 /**
  * build the tx to be sponsored
@@ -27,7 +35,7 @@ const provider = new BlockfrostProvider(BF_KEY);
 
 async function buildMintTx(changeAddress: string) {
   // minting wallet
-  const wallet = new MeshWallet({
+  const appWallet = new MeshWallet({
     networkId: 0,
     key: {
       type: "mnemonic",
@@ -35,17 +43,8 @@ async function buildMintTx(changeAddress: string) {
     },
   });
 
-  const minWallet = new MeshWallet({
-    networkId: 0,
-    key: {
-      type: "mnemonic",
-      words: minADASponsorWallet,
-    },
-    fetcher: provider,
-  });
-
   const { pubKeyHash: keyHash } = deserializeAddress(
-    await wallet.getChangeAddress()
+    await appWallet.getChangeAddress()
   );
 
   // create minting script
@@ -74,32 +73,34 @@ async function buildMintTx(changeAddress: string) {
   const txBuilder = new MeshTxBuilder({
     fetcher: provider,
     verbose: true,
-    isHydra: true
+    isHydra: true,
   });
 
   const inputs = await minWallet.getUtxos();
-  
 
   const unsignedTx = await txBuilder
     .mint("1", policyId, tokenNameHex)
     .mintingScript(forgingScript)
     .metadataValue(721, metadata)
-    .txOut(changeAddress, [{
-      unit: policyId + tokenNameHex,
-      quantity: "1"
-    }, {
-      unit: "lovelace",
-      quantity: "1500000"
-    }])
-    .changeAddress(await minWallet.getChangeAddress())
     .invalidHereafter(99999999)
     .selectUtxosFrom(inputs)
+    // S: additional changes required
+    .txOut(changeAddress, [
+      {
+        unit: policyId + tokenNameHex,
+        quantity: "1",
+      },
+      {
+        unit: "lovelace",
+        quantity: "1500000",
+      },
+    ])
+    .changeAddress(await minWallet.getChangeAddress())
     .setFee("0")
+    // E: additional changes required
     .complete();
 
   return unsignedTx;
-  // const signedTx = await wallet.signTx(unsignedTx, true);
-  // return signedTx;
 }
 
 /**
@@ -141,15 +142,13 @@ async function sponsorTransaction(txCbor: string) {
     poolId: poolAddress,
   });
 
-  console.log(sponsoredTx);
-
   // Validate and sign the transaction
   const validatedTx = await gaslessSponsor.validateTx({
     txCbor: sponsoredTx,
     poolSignServer: "http://localhost:5050",
   });
 
-  console.log("Validated Transaction CBOR:", validatedTx);
+  // console.log("Validated Transaction CBOR:", validatedTx);
 
   const wallet = new MeshWallet({
     networkId: 0,
@@ -159,18 +158,9 @@ async function sponsorTransaction(txCbor: string) {
     },
   });
 
-  const minWallet = new MeshWallet({
-    networkId: 0,
-    key: {
-      type: "mnemonic",
-      words: minADASponsorWallet,
-    },
-    fetcher: provider,
-  });
-
   const signedTx = await wallet.signTx(validatedTx, true);
   const policySignedTx = await minWallet.signTx(signedTx, true);
-
+  // console.log("Policy Signed Transaction CBOR:", policySignedTx);
   console.log(await provider.submitTx(policySignedTx));
 }
 
@@ -190,12 +180,8 @@ async function buildTx() {
     },
   });
 
-  // const utxos = await wallet.getUtxos();
-  const utxos = await gaslessPool.inAppWallet?.getUtxos()!;
   const changeAddress = await endUserWallet.getChangeAddress();
-
   const unsignedTx = await buildMintTx(changeAddress);
-
 
   sponsorTransaction(unsignedTx).catch(console.error);
 }
