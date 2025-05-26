@@ -2,6 +2,7 @@ import { Gasless } from "./gasless";
 import {
   BF_KEY,
   demoAssetMetadata,
+  minADASponsorWallet,
   mintingWallet,
   sponsorWallet,
   userWallet,
@@ -24,7 +25,7 @@ const provider = new BlockfrostProvider(BF_KEY);
  * build the tx to be sponsored
  */
 
-async function buildMintTx(inputs: UTxO[], changeAddress: string) {
+async function buildMintTx(changeAddress: string) {
   // minting wallet
   const wallet = new MeshWallet({
     networkId: 0,
@@ -32,6 +33,15 @@ async function buildMintTx(inputs: UTxO[], changeAddress: string) {
       type: "mnemonic",
       words: mintingWallet,
     },
+  });
+
+  const minWallet = new MeshWallet({
+    networkId: 0,
+    key: {
+      type: "mnemonic",
+      words: minADASponsorWallet,
+    },
+    fetcher: provider,
   });
 
   const { pubKeyHash: keyHash } = deserializeAddress(
@@ -64,13 +74,24 @@ async function buildMintTx(inputs: UTxO[], changeAddress: string) {
   const txBuilder = new MeshTxBuilder({
     fetcher: provider,
     verbose: true,
+    isHydra: true
   });
+
+  const inputs = await minWallet.getUtxos();
+  
 
   const unsignedTx = await txBuilder
     .mint("1", policyId, tokenNameHex)
     .mintingScript(forgingScript)
     .metadataValue(721, metadata)
-    .changeAddress(changeAddress)
+    .txOut(changeAddress, [{
+      unit: policyId + tokenNameHex,
+      quantity: "1"
+    }, {
+      unit: "lovelace",
+      quantity: "1500000"
+    }])
+    .changeAddress(await minWallet.getChangeAddress())
     .invalidHereafter(99999999)
     .selectUtxosFrom(inputs)
     .setFee("0")
@@ -129,6 +150,28 @@ async function sponsorTransaction(txCbor: string) {
   });
 
   console.log("Validated Transaction CBOR:", validatedTx);
+
+  const wallet = new MeshWallet({
+    networkId: 0,
+    key: {
+      type: "mnemonic",
+      words: mintingWallet,
+    },
+  });
+
+  const minWallet = new MeshWallet({
+    networkId: 0,
+    key: {
+      type: "mnemonic",
+      words: minADASponsorWallet,
+    },
+    fetcher: provider,
+  });
+
+  const signedTx = await wallet.signTx(validatedTx, true);
+  const policySignedTx = await minWallet.signTx(signedTx, true);
+
+  console.log(await provider.submitTx(policySignedTx));
 }
 
 /**
@@ -151,7 +194,8 @@ async function buildTx() {
   const utxos = await gaslessPool.inAppWallet?.getUtxos()!;
   const changeAddress = await endUserWallet.getChangeAddress();
 
-  const unsignedTx = await buildMintTx(utxos, changeAddress);
+  const unsignedTx = await buildMintTx(changeAddress);
+
 
   sponsorTransaction(unsignedTx).catch(console.error);
 }
